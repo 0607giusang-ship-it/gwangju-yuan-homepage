@@ -273,6 +273,65 @@
   });
   $("pw").addEventListener("keydown", function (e) { if (e.key === "Enter") $("loginBtn").click(); });
 
+  // ── 처음 한 번: 지금 홈페이지에 보이는 내용을 그대로 가져오기 ────────────────
+  // 아직 한 번도 저장하지 않았으면 저장된 내용이 없다. 그때 빈 칸만 보여 드리면 목사님이
+  // 지금 홈페이지에 있는 글을 전부 다시 타이핑하셔야 한다. 그래서 index.html 을 읽어
+  // **지금 보이는 그대로**를 폼에 채워 넣는다 — 처음부터 '쓰기'가 아니라 '고치기'로 시작한다.
+  // index.html 을 그대로 읽으므로 같은 내용을 두 군데에 적어 두는 일이 없다.
+  function txt(node) { return node ? (node.textContent || "").trim() : ""; }
+  function all(root, sel) { return Array.prototype.slice.call(root.querySelectorAll(sel)); }
+
+  function seedFromSite() {
+    return fetch("index.html", { cache: "no-store" })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        var doc = new DOMParser().parseFromString(html, "text/html");
+
+        var members = all(doc, "#staffGrid .staff-col").map(function (col) {
+          var m = {
+            name: txt(col.querySelector(".staff-name")),
+            role: txt(col.querySelector(".staff-role")),
+            education: [], ministry: []
+          };
+          all(col, ".staff-block").forEach(function (b) {
+            var label = txt(b.querySelector(".label"));
+            var items = all(b, "li").map(txt).filter(Boolean);
+            if (label.indexOf("학력") === 0) m.education = items;
+            else if (label.indexOf("사역") === 0) m.ministry = items;
+          });
+          return m;
+        }).filter(function (m) { return m.name; });
+
+        var wb = doc.querySelector("#worshipBody");
+        var worship = { primary: {}, tiers: [] };
+        if (wb) {
+          worship.primary = {
+            name: txt(wb.querySelector(".ws-primary .ws-name")),
+            time: txt(wb.querySelector(".ws-primary .ws-time"))
+          };
+          worship.tiers = all(wb, ".worship-tier").map(function (tier) {
+            return {
+              label: txt(tier.querySelector(".wt-label")),
+              rows: all(tier, ".sub-times .row").map(function (row) {
+                var sp = all(row, "span");
+                return { name: txt(sp[0]), time: txt(sp[1]) };
+              }).filter(function (r) { return r.name; })
+            };
+          });
+        }
+
+        var items = all(doc, "#newsList .news-row").map(function (row) {
+          return {
+            title: txt(row.querySelector(".t")),
+            detail: txt(row.querySelector(".detail")),
+            when: txt(row.querySelector(".d"))
+          };
+        }).filter(function (it) { return it.title; });
+
+        return { members: members, worship: worship, items: items };
+      });
+  }
+
   // ── 불러오기 ──────────────────────────────────────────────────────────────
   function loadAll() {
     Promise.all([readDoc("homepage/staff"), readDoc("homepage/worship"), readDoc("homepage/news")])
@@ -280,7 +339,23 @@
         state.staff = r[0] && r[0].members ? r[0] : { members: [] };
         state.worship = r[1] && (r[1].primary || r[1].tiers) ? r[1] : { primary: {}, tiers: [] };
         state.news = r[2] && r[2].items ? r[2] : { items: [] };
-        renderForms();
+
+        var needStaff = !state.staff.members.length;
+        var needWorship = !(state.worship.primary && state.worship.primary.name) &&
+                          !(state.worship.tiers || []).length;
+        var needNews = !(state.news.items || []).length;
+        if (!needStaff && !needWorship && !needNews) { renderForms(); return; }
+
+        // 아직 저장 전인 칸만 지금 홈페이지 내용으로 채운다(이미 저장된 칸은 건드리지 않는다).
+        return seedFromSite().then(function (seed) {
+          if (needStaff) state.staff = { members: seed.members };
+          if (needWorship) state.worship = seed.worship;
+          if (needNews) state.news = { items: seed.items };
+          renderForms();
+          msg($("saveMsg"), "지금 홈페이지에 있는 내용을 그대로 불러왔어요. 고친 뒤 저장하시면 됩니다.", true);
+        }).catch(function () {
+          renderForms(); // 못 가져와도 편집은 가능하다(빈 칸으로 시작)
+        });
       }).catch(function (e) {
         msg($("saveMsg"), "지금 내용을 불러오지 못했어요: " + e.message, false);
         renderForms();
