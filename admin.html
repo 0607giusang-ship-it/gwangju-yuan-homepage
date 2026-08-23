@@ -119,8 +119,10 @@
 
     <div class="card">
       <h2>비밀번호 바꾸기</h2>
-      <label for="newPw">새 비밀번호 (6자 이상)</label>
+      <label for="newPw">새 비밀번호 (12자 이상)</label>
       <input type="password" id="newPw" autocomplete="new-password">
+      <label for="newPw2">새 비밀번호 다시 입력</label>
+      <input type="password" id="newPw2" autocomplete="new-password">
       <div class="row-actions">
         <button type="button" id="changePwBtn">비밀번호 바꾸기</button>
       </div>
@@ -190,13 +192,26 @@
       body: JSON.stringify({ fields: f })
     }).then(function (r) {
       if (!r.ok) {
-        return r.text().then(function (t) {
-          throw new Error("저장 거부됨 (HTTP " + r.status + "). " +
-            (r.status === 403 ? "보안 규칙이 이 계정의 쓰기를 아직 허용하지 않습니다." : t.slice(0, 200)));
+        return r.text().then(function (body) {
+          // 들어온 지 한 시간이 지나면 증표(토큰)가 만료돼 401/403 이 온다. 그때 입력하던 글과
+          // 담아 둔 사진을 날려 버리면 안 되므로, 이 경우를 따로 표시해 위쪽에서 구분한다.
+          var e = new Error("저장 거부됨 (HTTP " + r.status + "). " +
+            (r.status === 403 ? "보안 규칙이 이 계정의 쓰기를 아직 허용하지 않습니다." : body.slice(0, 200)));
+          if (r.status === 401 || r.status === 403) e.authExpired = true;
+          throw e;
         });
       }
       return true;
     });
+  }
+
+  // 안 쓰게 된 사진 문서를 지운다. 지우기에 실패해도 저장 자체는 성공으로 본다
+  // (지워지지 않은 옛 사진은 화면에 안 나오고, 다음에 다시 지우면 된다).
+  function deleteDoc(path) {
+    return fetch(FB.docUrl(path), {
+      method: "DELETE",
+      headers: { "Authorization": "Bearer " + idToken }
+    }).then(function () { return true; }).catch(function () { return false; });
   }
 
   // ── 사진 압축 (Firestore 문서 한도 1MiB 안에 들어오게) ──────────────────────
@@ -229,6 +244,19 @@
   // ── 화면 상태 ─────────────────────────────────────────────────────────────
   var state = { staff: { members: [] }, worship: { primary: {}, tiers: [] }, news: { items: [] } };
   var pendingImages = {}; // 저장할 때 함께 올릴 새 사진들 { imageId: dataUrl }
+  var staleImages = [];   // 사진을 바꿔서 더는 쓰지 않게 된 옛 사진 문서 이름들
+  var loadedOnce = false; // 이미 불러온 뒤라면(재로그인 등) 다시 불러와 덮어쓰지 않는다
+  var loadFailed = false; // 지금 내용을 못 불러온 채로 편집 중인가 (그대로 저장하면 덮어쓴다)
+
+  // 사진을 새로 담을 때 옛 것을 정리 대상으로 표시한다.
+  // 아직 서버에 올리지도 않은 사진이면 그냥 목록에서 빼면 된다(서버에 없으니 지울 것도 없다).
+  function replaceImage(oldId, newId, dataUrl) {
+    if (oldId && oldId !== newId) {
+      if (Object.prototype.hasOwnProperty.call(pendingImages, oldId)) delete pendingImages[oldId];
+      else staleImages.push(oldId);
+    }
+    pendingImages[newId] = dataUrl;
+  }
 
   function $(id) { return document.getElementById(id); }
   function msg(node, text, ok) {
@@ -265,7 +293,14 @@
         $("loginCard").classList.add("hidden");
         $("editor").classList.remove("hidden");
         $("saveBar").classList.remove("hidden");
-        loadAll();
+        if (loadedOnce) {
+          // 시간이 지나 다시 들어온 경우. 쓰던 내용이 그대로 남아 있으므로 다시 불러오지 않는다
+          // (다시 불러오면 방금까지 고치던 글이 서버 내용으로 덮어써진다).
+          renderForms();
+          msg($("saveMsg"), "다시 들어왔습니다. 고치시던 내용 그대로예요 — 저장하기를 눌러 주세요.", true);
+        } else {
+          loadAll();
+        }
       }).catch(function (e) {
         $("loginBtn").disabled = false;
         msg($("loginMsg"), "연결하지 못했어요. 인터넷을 확인해 주세요.", false);
@@ -344,6 +379,7 @@
         var needWorship = !(state.worship.primary && state.worship.primary.name) &&
                           !(state.worship.tiers || []).length;
         var needNews = !(state.news.items || []).length;
+        loadedOnce = true;
         if (!needStaff && !needWorship && !needNews) { renderForms(); return; }
 
         // 아직 저장 전인 칸만 지금 홈페이지 내용으로 채운다(이미 저장된 칸은 건드리지 않는다).
@@ -357,7 +393,15 @@
           renderForms(); // 못 가져와도 편집은 가능하다(빈 칸으로 시작)
         });
       }).catch(function (e) {
-        msg($("saveMsg"), "지금 내용을 불러오지 못했어요: " + e.message, false);
+        // ★여기서 그냥 빈 폼을 보여 주면 큰 사고가 난다. 저장은 문서를 통째로 바꾸는 방식이라,
+        //   못 불러온 상태로 저장하면 서버에 있던 내용이 빈 값으로 덮어써진다. 게다가 홈페이지는
+        //   빈 값을 무시하고 원래 화면을 그대로 보여주기 때문에 오너가 유실을 알아채기 어렵다.
+        //   그래서 이 상태에서는 저장 버튼을 잠근다.
+        loadFailed = true;
+        $("saveBtn").disabled = true;
+        msg($("saveMsg"), "지금 내용을 불러오지 못했어요(" + e.message + "). " +
+          "이 상태로 저장하면 서버에 있던 내용이 지워질 수 있어서 저장을 잠갔습니다. " +
+          "인터넷을 확인하고 새로고침해 주세요.", false);
         renderForms();
       });
   }
@@ -389,7 +433,7 @@
       compress(f, function (err, url) {
         if (err) { msg($("saveMsg"), err.message, false); return; }
         var id = "staff-" + idx + "-" + Date.now();
-        pendingImages[id] = url;
+        replaceImage(state.staff.members[idx].photo, id, url);
         state.staff.members[idx].photo = id;
         prev.src = url; prev.classList.remove("hidden");
         msg($("saveMsg"), "사진을 담았습니다. 아래 '저장하기'를 눌러야 반영돼요.", true);
@@ -506,7 +550,7 @@
     compress(f, function (err, url) {
       if (err) { msg($("saveMsg"), err.message, false); return; }
       var id = "worship-" + Date.now();
-      pendingImages[id] = url;
+      replaceImage(state.worship.image, id, url);
       state.worship.image = id;
       var p = $("wsImagePreview");
       p.src = url; p.classList.remove("hidden");
@@ -516,6 +560,10 @@
 
   // ── 저장 ──────────────────────────────────────────────────────────────────
   $("saveBtn").addEventListener("click", function () {
+    if (loadFailed) {
+      msg($("saveMsg"), "지금 내용을 불러오지 못한 상태라 저장할 수 없습니다. 새로고침해 주세요.", false);
+      return;
+    }
     collectStaff(); collectWorship(); collectNews();
     $("saveBtn").disabled = true;
     msg($("saveMsg"), "저장하는 중...", true);
@@ -536,11 +584,30 @@
       })
       .then(function () {
         pendingImages = {};
+        // 바뀌어서 더는 쓰지 않는 옛 사진 문서를 지운다. 안 지우면 화면에 안 보이는 채로
+        // 서버에 계속 남아 자리를 차지하고, 주소를 아는 사람은 그대로 열어 볼 수 있다.
+        var junk = staleImages.slice();
+        staleImages = [];
+        return Promise.all(junk.map(function (id) {
+          return deleteDoc("homepage_images/" + id);
+        }));
+      })
+      .then(function () {
         $("saveBtn").disabled = false;
         msg($("saveMsg"), "저장했습니다. 홈페이지를 새로고침하면 바뀐 내용이 보입니다.", true);
       })
       .catch(function (e) {
         $("saveBtn").disabled = false;
+        if (e && e.authExpired) {
+          // ★고치던 내용(state)과 담아 둔 사진(pendingImages)은 그대로 둔 채 로그인만 다시 받는다.
+          //   여기서 화면을 갈아엎으면 오너가 한참 쓴 글이 통째로 사라진다.
+          $("editor").classList.add("hidden");
+          $("saveBar").classList.add("hidden");
+          $("loginCard").classList.remove("hidden");
+          msg($("loginMsg"), "들어온 지 오래돼서 다시 확인이 필요합니다. " +
+            "비밀번호를 한 번만 더 넣어 주세요 — 고치시던 내용은 그대로 남아 있습니다.", false);
+          return;
+        }
         msg($("saveMsg"), e.message, false);
       });
   });
@@ -548,7 +615,12 @@
   // ── 비밀번호 바꾸기 ───────────────────────────────────────────────────────
   $("changePwBtn").addEventListener("click", function () {
     var np = $("newPw").value;
-    if (!np || np.length < 6) { msg($("pwMsg"), "6자 이상으로 정해 주세요.", false); return; }
+    var np2 = $("newPw2").value;
+    // 짧은 비밀번호는 기계로 금방 맞혀진다. 이 화면 하나로 홈페이지 전체를 고칠 수 있으므로
+    // 길이를 넉넉히 둔다(길이가 가장 확실한 방어다).
+    if (!np || np.length < 12) { msg($("pwMsg"), "12자 이상으로 정해 주세요.", false); return; }
+    // 오타로 바꿔 버리면 다음부터 못 들어온다. 그래서 두 번 받아 맞는지 본다.
+    if (np !== np2) { msg($("pwMsg"), "두 번 입력한 비밀번호가 서로 다릅니다.", false); return; }
     $("changePwBtn").disabled = true;
     fetch("https://identitytoolkit.googleapis.com/v1/accounts:update?key=" + FB.apiKey, {
       method: "POST",
@@ -564,6 +636,7 @@
         }
         if (res.d.idToken) idToken = res.d.idToken;
         $("newPw").value = "";
+        $("newPw2").value = "";
         msg($("pwMsg"), "비밀번호를 바꿨습니다. 다음부터 새 비밀번호로 들어오세요.", true);
       }).catch(function () {
         $("changePwBtn").disabled = false;

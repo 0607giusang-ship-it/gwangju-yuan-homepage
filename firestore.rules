@@ -7,6 +7,21 @@
 // 중보기도요청 쪽 규칙이 나중에 바뀌면 이 파일에도 같은 변경을 옮겨 와야 한다.
 // (원본: 중보기도요청 프로젝트의 firestore.rules)
 //
+// ⚠ 반대 방향도 위험하다: 중보기도요청 폴더에는 firebase.json 이 있어서 그 폴더에서
+//   `firebase deploy` 를 돌리면 **그 폴더의 firestore.rules 가 프로젝트 전체에 나간다.**
+//   그래서 이 병합본과 **똑같은 파일이 그 폴더에도 있어야 한다.** 한쪽만 고치면, 다른 쪽에서
+//   배포하는 순간 홈페이지 관리자 규칙이 조용히 사라지고(오류 메시지도 안 뜬다) 홈페이지는
+//   저장된 내용 대신 하드코딩 내용으로 되돌아간다.
+//   두 파일은 항상 같은 내용이어야 한다:
+//     C:\Users\SKY\gwangju-yuan-homepage\firestore.rules
+//     F:\광주유안교회\프로그램\중보기도요청\firestore.rules
+//
+//   두 파일이 같기만 하면 **어느 쪽에서 배포해도 안전하다** — 홈페이지 폴더에서 배포해도
+//   중보기도요청 규칙이 함께 나가고, 그 반대도 마찬가지다. 그래서 지켜야 할 습관은 하나다:
+//   **배포 전에 두 파일이 같은지 한 번 비교한다.**
+//     비교: fc "C:\Users\SKY\gwangju-yuan-homepage\firestore.rules" "F:\광주유안교회\프로그램\중보기도요청\firestore.rules"
+//     (아무 차이도 없다고 나오면 그대로 배포하면 된다.)
+//
 // 이번에 추가된 부분은 아래 "홈페이지 관리자 모드" 한 덩어리뿐이다.
 
 rules_version = '2';
@@ -148,14 +163,21 @@ service cloud.firestore {
     }
 
     // 사역자 소개 / 예배시간 / 교회소식
+    //
+    // ★read 대신 get 만 연다. read 는 "이 문서 주세요(get)" 와 "이 방의 문서 목록 주세요(list)"
+    //   를 한꺼번에 여는 말이다. 홈페이지는 문서를 이름으로 하나씩만 가져가므로 목록은 필요
+    //   없는데, 열어 두면 아무나 이 방에 무엇이 들어 있는지 훑어볼 수 있다.
     match /homepage/{docId} {
-      allow read: if true;
+      allow get: if true;
+      allow list: if false;
       allow write: if isHomepageAdmin();
     }
 
     // 관리자가 올린 사진 (압축된 그림 한 장 = 문서 하나)
+    // 여기도 같은 이유로 목록은 닫는다 — 사진 문서 이름이 줄줄이 노출될 이유가 없다.
     match /homepage_images/{imageId} {
-      allow read: if true;
+      allow get: if true;
+      allow list: if false;
       allow write: if isHomepageAdmin();
     }
 

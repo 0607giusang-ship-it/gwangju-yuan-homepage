@@ -42,13 +42,22 @@
     return out;
   }
 
-  function getDoc(path) {
-    return fetch(FB.docUrl(path), { cache: "no-store" }).then(function (res) {
+  // 글(staff·worship·news)은 관리자가 언제든 고칠 수 있으므로 늘 새로 받아 온다(no-store).
+  // 사진(homepage_images)은 다르다 — 사진 문서 이름에 올린 시각이 박혀 있어서 **한 번 만들어진
+  // 문서의 내용은 절대 바뀌지 않는다**(사진을 바꾸면 이름이 다른 새 문서가 생긴다). 그래서
+  // 브라우저가 받아 둔 것을 다시 써도 언제나 맞다. 사진은 글보다 수십 배 크기 때문에, 이걸
+  // 매번 다시 받으면 무료 요금제의 한 달 전송량을 방문 몇 천 번으로 다 써 버린다.
+  function getDoc(path, cacheable) {
+    return fetch(FB.docUrl(path), { cache: cacheable ? "default" : "no-store" }).then(function (res) {
       if (!res.ok) throw new Error("HTTP " + res.status);
       return res.json();
     }).then(function (doc) {
       return fields(doc.fields || {});
     });
+  }
+
+  function getImageDoc(id) {
+    return getDoc("homepage_images/" + encodeURIComponent(id), true);
   }
 
   // ── 화면 만들기 도우미 (기존 CSS 클래스를 그대로 쓴다) ────────────────────────
@@ -63,7 +72,7 @@
   // 사진을 실제로 그려 넣는다. 사진 문서를 못 받으면 원래 사진(하드코딩)을 그대로 둔다.
   function applyPhoto(imgNode, photoId) {
     if (!imgNode || !photoId) return;
-    getDoc("homepage_images/" + encodeURIComponent(photoId)).then(function (d) {
+    getImageDoc(photoId).then(function (d) {
       if (d && typeof d.dataUrl === "string" && d.dataUrl.indexOf("data:image/") === 0) {
         imgNode.src = d.dataUrl;
       }
@@ -150,7 +159,7 @@
 
     // 예배시간 안내 그림(선택). 관리자가 올렸을 때만 표 아래에 붙는다.
     if (data.image) {
-      getDoc("homepage_images/" + encodeURIComponent(data.image)).then(function (d) {
+      getImageDoc(data.image).then(function (d) {
         if (!d || typeof d.dataUrl !== "string" || d.dataUrl.indexOf("data:image/") !== 0) return;
         var holder = document.getElementById("worshipImage");
         if (!holder) return;
