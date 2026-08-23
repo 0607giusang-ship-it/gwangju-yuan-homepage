@@ -144,7 +144,7 @@ service cloud.firestore {
     //   바꾸기 전에는 아무도 쓸 수 없다 = 안전한 쪽으로 잠겨 있다.
     function isHomepageAdmin() {
       return request.auth != null
-        && request.auth.uid == "ADMIN_UID_HERE";
+        && request.auth.uid == "9kmJXEWaujXY3XwmYEBHLTPk8yl2";
     }
 
     // 사역자 소개 / 예배시간 / 교회소식
