@@ -1,13 +1,24 @@
 // Minimal service worker: satisfies PWA installability (fetch handler present)
 // and caches the app-shell files so the last-opened screen still loads with
 // no signal. Adapted from the wordrun-johngospel sw.js pattern.
-const CACHE_NAME = "gwangju-yuan-shell-v1";
+// ★내용을 바꿔 배포할 때는 이 버전 문자열을 올린다(옛 캐시가 통째로 버려진다).
+const CACHE_NAME = "gwangju-yuan-shell-v2";
 const SHELL_FILES = [
   "./",
   "./index.html",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
+  // 화면을 만드는 스크립트. 못 받아도 index.html 안의 내용이 그대로 보인다.
+  "./firebase-config.js",
+  "./content.js",
+  // 사진은 예전에 index.html 안에 박혀 있던 것을 파일로 뺀 것이다. 여기 담아 두어야
+  // 인터넷이 없을 때도 예전과 똑같이 사진까지 보인다.
+  "./img/hero-portrait.png",
+  "./img/staff-1.jpg",
+  "./img/staff-2.jpg",
+  "./img/map.png",
+  "./img/path-portrait.png",
 ];
 
 self.addEventListener("install", (event) => {

@@ -1,0 +1,167 @@
+// ⚠⚠ 이 파일은 **프로젝트 uanchurch-1 전체의 규칙**이다 ⚠⚠
+//
+// Firestore 규칙은 프로젝트에 딱 하나만 존재한다. 그래서 이 파일에는 홈페이지 규칙뿐
+// 아니라 **중보기도요청 앱의 규칙이 원문 그대로 함께 들어 있다**(아래 users/prayers/config).
+// 홈페이지 규칙만 담은 파일을 배포하면 중보기도요청 규칙이 통째로 사라진다 — 절대 금지.
+//
+// 중보기도요청 쪽 규칙이 나중에 바뀌면 이 파일에도 같은 변경을 옮겨 와야 한다.
+// (원본: 중보기도요청 프로젝트의 firestore.rules)
+//
+// 이번에 추가된 부분은 아래 "홈페이지 관리자 모드" 한 덩어리뿐이다.
+
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 광주유안교회 중보기도 요청 — Firestore 보안 규칙
+//
+// ★이 규칙이 하는 가장 중요한 일:
+//   "목회자만" 글(pastor_only)은 **평문(content) 필드를 아예 가질 수 없게** 막는다.
+//   즉 클라이언트가 실수로든 고의로든 평문을 올리려 하면 **서버가 거부**한다.
+//   암호화를 "앱이 잘 해 주겠지"에 맡기지 않고 규칙으로 강제하는 것이다.
+//
+// ⚠ 정직한 한계 고지 (오너가 반드시 알아야 함):
+//   이 앱은 로그인(Firebase Authentication)을 쓰지 않기로 했다. 그래서 규칙은
+//   "누가 요청했는지"를 알 수 없고, **글의 모양(필드·타입·길이)만 검사**할 수 있다.
+//   - 공개("전체") 글은 앱 설정값을 아는 사람이면 누구나 읽을 수 있다.
+//   - 비밀("목회자만") 글은 **읽을 수는 있으나 암호문이라 내용을 알 수 없다.**
+//     비밀 보호는 규칙이 아니라 **암호화**가 담당한다(비밀번호를 모르면 못 연다).
+//   - 성도도 '목회자만' 글을 쓸 수 있어야 하므로(개인 기도제목을 목사님께만),
+//     잠그는 자물쇠는 공개하고 여는 열쇠만 비밀번호로 보호한다(공개키 방식).
+//     그래서 성도는 **쓸 수는 있어도 읽을 수는 없다.**
+//   더 강하게 막고 싶다면 README '보안을 한 단계 올리고 싶다면' 절의
+//   익명 로그인(Anonymous Auth) 적용법을 따르면 된다.
+// ─────────────────────────────────────────────────────────────────────────────
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── 공통 검사 도우미 ───────────────────────────────────────────────────
+    function str(v, maxLen) {
+      return v is string && v.size() > 0 && v.size() <= maxLen;
+    }
+
+    // 기도 요청 글 한 건이 올바른 모양인지 검사한다.
+    function validPrayer(d) {
+      return
+        // 허용된 필드만 있어야 한다(모르는 필드를 끼워 넣지 못하게).
+        d.keys().hasOnly([
+          'authorName', 'authorRole', 'visibility', 'periodDays',
+          'createdAt', 'expiresAt', 'content', 'cipher'
+        ])
+        && str(d.authorName, 40)
+        && d.authorRole in ['pastor', 'member']
+        && d.visibility in ['all', 'pastor_only']
+        && d.periodDays in [7, 14, 30]
+        // 작성 시각은 서버 시각이어야 한다(클라이언트가 마음대로 못 적게).
+        && d.createdAt == request.time
+        // 만료 시각은 미래여야 하고, 최대 40일을 넘을 수 없다(1개월 + 여유).
+        && d.expiresAt is timestamp
+        && d.expiresAt > request.time
+        && d.expiresAt < request.time + duration.value(40, 'd')
+        && (
+          // ① 전체 공개 글: 평문 content 만 있고 암호문(cipher)은 없어야 한다.
+          (
+            d.visibility == 'all'
+            && str(d.content, 2000)
+            && !('cipher' in d)
+          )
+          // ② 목회자만 글: ★평문 content 가 있으면 거부. 암호문만 허용.
+          //    ek = 글마다 새로 만든 임시 열쇠를 목회자 공개키로 잠근 것(봉투 방식).
+          || (
+            d.visibility == 'pastor_only'
+            && !('content' in d)
+            && d.cipher is map
+            && d.cipher.keys().hasOnly(['v', 'iv', 'ct', 'ek'])
+            && d.cipher.v == 2
+            && str(d.cipher.iv, 64)      // 12바이트 IV 의 base64
+            && str(d.cipher.ct, 20000)   // 잠긴 본문 base64
+            && str(d.cipher.ek, 1024)    // 잠긴 임시 열쇠 base64(2048비트 RSA = 약 344자)
+          )
+        );
+    }
+
+    // 등록 정보(이름·직분·전화번호)가 올바른 모양인지 검사한다.
+    function validUser(d) {
+      return
+        d.keys().hasOnly([
+          'name', 'position', 'phone', 'role',
+          'fcmToken', 'createdAt', 'updatedAt'
+        ])
+        && str(d.name, 40)
+        && str(d.position, 40)
+        && str(d.phone, 30)
+        && d.role in ['pastor', 'member']
+        && (!('fcmToken' in d) || d.fcmToken is string)
+        && d.updatedAt == request.time;
+    }
+
+    // ── 등록 정보 ─────────────────────────────────────────────────────────
+    // 이름·전화번호 같은 개인정보가 들어 있으므로 **읽기를 아예 막는다.**
+    // 앱은 자기 정보를 브라우저 저장소에 따로 갖고 있어 다시 읽을 필요가 없고,
+    // 푸시를 보내는 Cloud Functions 는 관리자 권한이라 이 규칙을 거치지 않는다.
+    match /users/{deviceId} {
+      allow read: if false;
+      allow create, update: if validUser(request.resource.data);
+      allow delete: if false;
+    }
+
+    // ── 기도 요청 글 ──────────────────────────────────────────────────────
+    // 읽기는 열려 있으나, 비밀글의 내용은 암호문이라 비밀번호 없이는 못 읽는다.
+    // 수정·삭제는 아무도 못 한다(기간이 지나면 Firestore TTL 이 지운다).
+    match /prayers/{prayerId} {
+      allow read: if true;
+      allow create: if validPrayer(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    // ── 암호화 설정(소금값·비밀번호 확인용 암호문) ─────────────────────────
+    // 목회자가 처음 비밀번호를 정할 때 딱 한 번 만들어진다.
+    // pubJwk(자물쇠)는 공개해도 안전하고, privCt(열쇠)는 비밀번호로 잠겨 있어
+    // 비밀번호를 모르면 이 문서를 다 읽어도 아무것도 열 수 없다.
+    // 한 번 만들어지면 **아무도 바꾸거나 지울 수 없다** — 값이 바뀌면
+    // 이미 올라간 비밀글을 영영 못 열게 되기 때문이다.
+    match /config/{docId} {
+      allow read: if true;
+      allow create: if docId == 'crypto'
+        && request.resource.data.keys().hasOnly(['v', 'pubJwk', 'salt', 'privIv', 'privCt', 'createdAt'])
+        && request.resource.data.v == 2
+        && str(request.resource.data.pubJwk, 4096)   // 공개해도 되는 자물쇠(공개키)
+        && str(request.resource.data.salt, 64)
+        && str(request.resource.data.privIv, 64)
+        && str(request.resource.data.privCt, 8192)   // 비밀번호로 잠근 열쇠(비밀키)
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // ── 홈페이지 관리자 모드 (여기부터가 이번에 추가된 부분) ─────────────────
+    //
+    // 읽기는 누구나(홈페이지 방문자가 내용을 봐야 하므로), 쓰기는 관리자 계정 하나만.
+    // 관리자 여부는 "로그인한 사람의 고유번호(uid)가 그 계정인가"로만 판단한다.
+    // 비밀번호는 여기에도, 앱에도, 데이터에도 없다 — Firebase 인증 서버가 검사한다.
+    //
+    // ★ADMIN_UID 는 관리자 계정을 만든 뒤 그 계정의 사용자 UID 로 바꿔야 한다.
+    //   (Firebase 콘솔 > Authentication > 사용자 목록의 '사용자 UID' 열)
+    //   바꾸기 전에는 아무도 쓸 수 없다 = 안전한 쪽으로 잠겨 있다.
+    function isHomepageAdmin() {
+      return request.auth != null
+        && request.auth.uid == "ADMIN_UID_HERE";
+    }
+
+    // 사역자 소개 / 예배시간 / 교회소식
+    match /homepage/{docId} {
+      allow read: if true;
+      allow write: if isHomepageAdmin();
+    }
+
+    // 관리자가 올린 사진 (압축된 그림 한 장 = 문서 하나)
+    match /homepage_images/{imageId} {
+      allow read: if true;
+      allow write: if isHomepageAdmin();
+    }
+
+    // 위에서 다루지 않은 모든 경로는 막는다.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

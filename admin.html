@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>광주유안교회 홈페이지 관리</title>
+<meta name="robots" content="noindex, nofollow">
+
+<!--
+  홈페이지 관리자 화면.
+
+  ★비밀번호는 이 파일 어디에도 없습니다. 입력한 비밀번호는 구글(Firebase 인증) 서버로만
+    보내지고, 맞는지 아닌지는 서버가 판단합니다. 이 화면은 "맞다"는 증표(토큰)를 받아
+    저장 요청에 붙일 뿐입니다. 그래서 이 파일을 아무리 뜯어봐도 비밀번호는 나오지 않고,
+    증표 없이 저장을 시도하면 서버 규칙이 막습니다.
+
+  ★여기서 저장하면 재배포 없이 홈페이지에 바로 반영됩니다(내용의 출처가 Firestore 이므로).
+-->
+
+<style>
+  :root {
+    --bg: #faf7f0; --card: #fff; --ink: #241f18; --ink-soft: #6b6154;
+    --line: #e5ddcd; --gold: #e4a930; --navy: #2f3d52; --danger: #b3261e; --ok: #2e7d32;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    line-height: 1.6; font-size: 15px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 20px 16px 80px; }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; }
+  .sub { color: var(--ink-soft); font-size: 0.85rem; margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 1rem; margin: 0 0 12px; }
+  label { display: block; font-size: 0.8rem; color: var(--ink-soft); margin: 10px 0 4px; }
+  input[type="text"], input[type="password"], textarea {
+    width: 100%; font: inherit; padding: 9px 11px; border: 1px solid var(--line);
+    border-radius: 9px; background: #fffdf9; color: var(--ink);
+  }
+  textarea { min-height: 84px; resize: vertical; }
+  button {
+    font: inherit; font-weight: 700; padding: 9px 15px; border-radius: 999px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer;
+  }
+  button.primary { background: var(--navy); border-color: var(--navy); color: #fff; }
+  button.small { font-size: 0.8rem; padding: 5px 11px; font-weight: 600; }
+  button.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .row-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .item { border: 1px dashed var(--line); border-radius: 11px; padding: 12px; margin-top: 12px; }
+  .item-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .item-head strong { font-size: 0.85rem; color: var(--ink-soft); }
+  .note { font-size: 0.8rem; color: var(--ink-soft); margin-top: 8px; }
+  .msg { margin-top: 10px; font-size: 0.85rem; font-weight: 700; }
+  .msg.ok { color: var(--ok); }
+  .msg.err { color: var(--danger); }
+  .preview { display: block; max-width: 150px; border-radius: 10px; border: 1px solid var(--line); margin-top: 8px; }
+  .bar { position: sticky; bottom: 0; background: rgba(250,247,240,0.95); border-top: 1px solid var(--line);
+         padding: 12px 16px; display: flex; gap: 10px; justify-content: flex-end; }
+  .tiny { font-size: 0.75rem; color: var(--ink-soft); }
+  /* ★맨 아래에 둔다 — .bar 등 display 를 지정하는 규칙보다 뒤에 있어야 실제로 숨겨진다. */
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <h1>홈페이지 관리</h1>
+  <p class="sub">여기서 고치고 저장하면 홈페이지에 바로 반영됩니다.</p>
+
+  <!-- ── 로그인 ────────────────────────────────────────────────────────────── -->
+  <div class="card" id="loginCard">
+    <h2>비밀번호</h2>
+    <label for="pw">관리자 비밀번호</label>
+    <input type="password" id="pw" autocomplete="current-password" placeholder="비밀번호를 입력하세요">
+    <div class="row-actions">
+      <button class="primary" id="loginBtn" type="button">들어가기</button>
+    </div>
+    <p class="msg" id="loginMsg"></p>
+    <p class="note">비밀번호는 이 기기에 저장되지 않습니다. 창을 닫으면 다시 입력해야 합니다.</p>
+  </div>
+
+  <!-- ── 편집 ──────────────────────────────────────────────────────────────── -->
+  <div id="editor" class="hidden">
+
+    <div class="card">
+      <h2>함께 섬기는 이들</h2>
+      <div id="staffList"></div>
+      <div class="row-actions">
+        <button class="small" type="button" id="addStaff">＋ 사람 추가</button>
+      </div>
+      <p class="note">학력·사역은 한 줄에 하나씩 적어 주세요.</p>
+    </div>
+
+    <div class="card">
+      <h2>예배시간</h2>
+      <label for="wsName">대표 예배 이름</label>
+      <input type="text" id="wsName" placeholder="주일예배">
+      <label for="wsTime">대표 예배 시간</label>
+      <input type="text" id="wsTime" placeholder="오전 11:00">
+      <div id="tierList"></div>
+      <div class="row-actions">
+        <button class="small" type="button" id="addTier">＋ 묶음 추가</button>
+      </div>
+      <label>예배시간 안내 그림 (선택)</label>
+      <input type="file" id="wsImage" accept="image/*">
+      <img class="preview hidden" id="wsImagePreview" alt="">
+      <p class="note">그림을 올리면 예배시간 표 아래에 함께 보입니다. 안 올리면 표만 보입니다.</p>
+    </div>
+
+    <div class="card">
+      <h2>이번 주 교회소식</h2>
+      <div id="newsItems"></div>
+      <div class="row-actions">
+        <button class="small" type="button" id="addNews">＋ 소식 추가</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>비밀번호 바꾸기</h2>
+      <label for="newPw">새 비밀번호 (6자 이상)</label>
+      <input type="password" id="newPw" autocomplete="new-password">
+      <div class="row-actions">
+        <button type="button" id="changePwBtn">비밀번호 바꾸기</button>
+      </div>
+      <p class="msg" id="pwMsg"></p>
+    </div>
+
+    <p class="tiny">저장하면 홈페이지가 즉시 바뀝니다. 되돌리려면 다시 고쳐서 저장하면 됩니다.</p>
+  </div>
+</div>
+
+<div class="bar hidden" id="saveBar">
+  <span class="msg" id="saveMsg"></span>
+  <button class="primary" id="saveBtn" type="button">저장하기</button>
+</div>
+
+<script src="firebase-config.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var FB = window.HOMEPAGE_FB;
+  var idToken = null;
+
+  // ── Firestore 값 표기법 <-> 평범한 값 ───────────────────────────────────────
+  function plain(v) {
+    if (v === null || v === undefined) return null;
+    if ("stringValue" in v) return v.stringValue;
+    if ("integerValue" in v) return Number(v.integerValue);
+    if ("booleanValue" in v) return v.booleanValue;
+    if ("nullValue" in v) return null;
+    if ("arrayValue" in v) return (v.arrayValue.values || []).map(plain);
+    if ("mapValue" in v) return unfields(v.mapValue.fields || {});
+    return null;
+  }
+  function unfields(f) {
+    var o = {};
+    for (var k in f) if (Object.prototype.hasOwnProperty.call(f, k)) o[k] = plain(f[k]);
+    return o;
+  }
+  function encode(v) {
+    if (v === null || v === undefined) return { nullValue: null };
+    if (typeof v === "string") return { stringValue: v };
+    if (typeof v === "boolean") return { booleanValue: v };
+    if (typeof v === "number") return { integerValue: String(Math.round(v)) };
+    if (Object.prototype.toString.call(v) === "[object Array]") {
+      return { arrayValue: { values: v.map(encode) } };
+    }
+    var f = {};
+    for (var k in v) if (Object.prototype.hasOwnProperty.call(v, k)) f[k] = encode(v[k]);
+    return { mapValue: { fields: f } };
+  }
+
+  function readDoc(path) {
+    return fetch(FB.docUrl(path), { cache: "no-store" }).then(function (r) {
+      if (r.status === 404) return {};          // 아직 만들지 않은 문서 = 빈 값
+      if (!r.ok) throw new Error("읽기 실패 (HTTP " + r.status + ")");
+      return r.json().then(function (d) { return unfields(d.fields || {}); });
+    });
+  }
+
+  function writeDoc(path, obj) {
+    var f = {};
+    for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) f[k] = encode(obj[k]);
+    return fetch(FB.docUrl(path), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + idToken },
+      body: JSON.stringify({ fields: f })
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          throw new Error("저장 거부됨 (HTTP " + r.status + "). " +
+            (r.status === 403 ? "보안 규칙이 이 계정의 쓰기를 아직 허용하지 않습니다." : t.slice(0, 200)));
+        });
+      }
+      return true;
+    });
+  }
+
+  // ── 사진 압축 (Firestore 문서 한도 1MiB 안에 들어오게) ──────────────────────
+  var MAX_DIM = 1280;
+  var MAX_CHARS = 700000; // 넉넉히 잡은 상한
+  function compress(file, cb) {
+    var reader = new FileReader();
+    reader.onerror = function () { cb(new Error("사진을 읽지 못했어요.")); };
+    reader.onload = function () {
+      var img = new Image();
+      img.onerror = function () { cb(new Error("사진 형식을 알 수 없어요.")); };
+      img.onload = function () {
+        var w = img.naturalWidth || 1, h = img.naturalHeight || 1;
+        var scale = Math.min(1, MAX_DIM / Math.max(w, h));
+        var c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(w * scale));
+        c.height = Math.max(1, Math.round(h * scale));
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        var qs = [0.82, 0.7, 0.55, 0.42], i = 0, url;
+        do { url = c.toDataURL("image/jpeg", qs[i]); i++; }
+        while (url.length > MAX_CHARS && i < qs.length);
+        if (url.length > MAX_CHARS) { cb(new Error("사진이 너무 큽니다. 조금 작은 사진을 올려 주세요.")); return; }
+        cb(null, url);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ── 화면 상태 ─────────────────────────────────────────────────────────────
+  var state = { staff: { members: [] }, worship: { primary: {}, tiers: [] }, news: { items: [] } };
+  var pendingImages = {}; // 저장할 때 함께 올릴 새 사진들 { imageId: dataUrl }
+
+  function $(id) { return document.getElementById(id); }
+  function msg(node, text, ok) {
+    node.textContent = text;
+    node.className = "msg " + (ok ? "ok" : "err");
+  }
+  function lines(v) { return (v || "").split("\n").map(function (x) { return x.trim(); }).filter(Boolean); }
+
+  // ── 로그인 ────────────────────────────────────────────────────────────────
+  $("loginBtn").addEventListener("click", function () {
+    var pw = $("pw").value;
+    if (!pw) { msg($("loginMsg"), "비밀번호를 입력해 주세요.", false); return; }
+    $("loginBtn").disabled = true;
+    msg($("loginMsg"), "확인하는 중...", true);
+    fetch("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + FB.apiKey, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: FB.adminEmail, password: pw, returnSecureToken: true })
+    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        $("loginBtn").disabled = false;
+        if (!res.ok) {
+          var code = (res.d.error && res.d.error.message) || "UNKNOWN";
+          var human = code === "INVALID_LOGIN_CREDENTIALS" || code === "INVALID_PASSWORD"
+            ? "비밀번호가 맞지 않아요."
+            : code === "CONFIGURATION_NOT_FOUND"
+              ? "아직 준비가 안 됐어요. ADMIN-SETUP.md 의 1·2단계를 먼저 해 주세요."
+              : "들어가지 못했어요 (" + code + ")";
+          msg($("loginMsg"), human, false);
+          return;
+        }
+        idToken = res.d.idToken;
+        $("pw").value = "";
+        $("loginCard").classList.add("hidden");
+        $("editor").classList.remove("hidden");
+        $("saveBar").classList.remove("hidden");
+        loadAll();
+      }).catch(function (e) {
+        $("loginBtn").disabled = false;
+        msg($("loginMsg"), "연결하지 못했어요. 인터넷을 확인해 주세요.", false);
+      });
+  });
+  $("pw").addEventListener("keydown", function (e) { if (e.key === "Enter") $("loginBtn").click(); });
+
+  // ── 불러오기 ──────────────────────────────────────────────────────────────
+  function loadAll() {
+    Promise.all([readDoc("homepage/staff"), readDoc("homepage/worship"), readDoc("homepage/news")])
+      .then(function (r) {
+        state.staff = r[0] && r[0].members ? r[0] : { members: [] };
+        state.worship = r[1] && (r[1].primary || r[1].tiers) ? r[1] : { primary: {}, tiers: [] };
+        state.news = r[2] && r[2].items ? r[2] : { items: [] };
+        renderForms();
+      }).catch(function (e) {
+        msg($("saveMsg"), "지금 내용을 불러오지 못했어요: " + e.message, false);
+        renderForms();
+      });
+  }
+
+  // ── 폼 그리기 ─────────────────────────────────────────────────────────────
+  function staffItem(m, idx) {
+    var box = document.createElement("div");
+    box.className = "item";
+    box.innerHTML =
+      '<div class="item-head"><strong>' + (idx + 1) + '번째</strong>' +
+      '<button class="small danger" type="button" data-del="staff">지우기</button></div>' +
+      '<label>이름</label><input type="text" data-f="name">' +
+      '<label>직분</label><input type="text" data-f="role">' +
+      '<label>학력 (한 줄에 하나)</label><textarea data-f="education"></textarea>' +
+      '<label>사역 (한 줄에 하나)</label><textarea data-f="ministry"></textarea>' +
+      '<label>사진 바꾸기 (선택)</label><input type="file" accept="image/*" data-f="photo">' +
+      '<img class="preview hidden" alt="">';
+    box.querySelector('[data-f="name"]').value = m.name || "";
+    box.querySelector('[data-f="role"]').value = m.role || "";
+    box.querySelector('[data-f="education"]').value = (m.education || []).join("\n");
+    box.querySelector('[data-f="ministry"]').value = (m.ministry || []).join("\n");
+    box.querySelector('[data-del="staff"]').addEventListener("click", function () {
+      state.staff.members.splice(idx, 1); collectStaff(true); renderForms();
+    });
+    var prev = box.querySelector("img.preview");
+    box.querySelector('[data-f="photo"]').addEventListener("change", function (e) {
+      var f = e.target.files && e.target.files[0];
+      if (!f) return;
+      compress(f, function (err, url) {
+        if (err) { msg($("saveMsg"), err.message, false); return; }
+        var id = "staff-" + idx + "-" + Date.now();
+        pendingImages[id] = url;
+        state.staff.members[idx].photo = id;
+        prev.src = url; prev.classList.remove("hidden");
+        msg($("saveMsg"), "사진을 담았습니다. 아래 '저장하기'를 눌러야 반영돼요.", true);
+      });
+    });
+    return box;
+  }
+
+  function tierItem(t, idx) {
+    var box = document.createElement("div");
+    box.className = "item";
+    box.innerHTML =
+      '<div class="item-head"><strong>묶음 ' + (idx + 1) + '</strong>' +
+      '<button class="small danger" type="button">지우기</button></div>' +
+      '<label>묶음 이름 (예: 매주 / 월별)</label><input type="text" data-f="label">' +
+      '<label>항목 (한 줄에 "이름 | 시간")</label><textarea data-f="rows"></textarea>';
+    box.querySelector('[data-f="label"]').value = t.label || "";
+    box.querySelector('[data-f="rows"]').value = (t.rows || []).map(function (r) {
+      return (r.name || "") + " | " + (r.time || "");
+    }).join("\n");
+    box.querySelector("button").addEventListener("click", function () {
+      state.worship.tiers.splice(idx, 1); collectWorship(true); renderForms();
+    });
+    return box;
+  }
+
+  function newsItem(it, idx) {
+    var box = document.createElement("div");
+    box.className = "item";
+    box.innerHTML =
+      '<div class="item-head"><strong>' + (idx + 1) + '번째</strong>' +
+      '<button class="small danger" type="button">지우기</button></div>' +
+      '<label>제목</label><input type="text" data-f="title">' +
+      '<label>내용</label><textarea data-f="detail"></textarea>' +
+      '<label>언제 (예: 다음 주일)</label><input type="text" data-f="when">';
+    box.querySelector('[data-f="title"]').value = it.title || "";
+    box.querySelector('[data-f="detail"]').value = it.detail || "";
+    box.querySelector('[data-f="when"]').value = it.when || "";
+    box.querySelector("button").addEventListener("click", function () {
+      state.news.items.splice(idx, 1); collectNews(true); renderForms();
+    });
+    return box;
+  }
+
+  function renderForms() {
+    var sl = $("staffList"); sl.innerHTML = "";
+    state.staff.members.forEach(function (m, i) { sl.appendChild(staffItem(m, i)); });
+
+    $("wsName").value = (state.worship.primary && state.worship.primary.name) || "";
+    $("wsTime").value = (state.worship.primary && state.worship.primary.time) || "";
+    var tl = $("tierList"); tl.innerHTML = "";
+    (state.worship.tiers || []).forEach(function (t, i) { tl.appendChild(tierItem(t, i)); });
+
+    var nl = $("newsItems"); nl.innerHTML = "";
+    (state.news.items || []).forEach(function (it, i) { nl.appendChild(newsItem(it, i)); });
+  }
+
+  // ── 폼 -> 상태 ────────────────────────────────────────────────────────────
+  function collectStaff(keepOnly) {
+    var boxes = $("staffList").querySelectorAll(".item");
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i], m = state.staff.members[i] || {};
+      m.name = b.querySelector('[data-f="name"]').value.trim();
+      m.role = b.querySelector('[data-f="role"]').value.trim();
+      m.education = lines(b.querySelector('[data-f="education"]').value);
+      m.ministry = lines(b.querySelector('[data-f="ministry"]').value);
+      state.staff.members[i] = m;
+    }
+    if (!keepOnly) state.staff.members = state.staff.members.filter(function (m) { return m && m.name; });
+  }
+  function collectWorship(keepOnly) {
+    state.worship.primary = { name: $("wsName").value.trim(), time: $("wsTime").value.trim() };
+    var boxes = $("tierList").querySelectorAll(".item"), tiers = [];
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i];
+      tiers.push({
+        label: b.querySelector('[data-f="label"]').value.trim(),
+        rows: lines(b.querySelector('[data-f="rows"]').value).map(function (line) {
+          var p = line.split("|");
+          return { name: (p[0] || "").trim(), time: (p[1] || "").trim() };
+        }).filter(function (r) { return r.name; })
+      });
+    }
+    state.worship.tiers = keepOnly ? tiers : tiers.filter(function (t) { return t.rows.length; });
+  }
+  function collectNews(keepOnly) {
+    var boxes = $("newsItems").querySelectorAll(".item"), items = [];
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i];
+      items.push({
+        title: b.querySelector('[data-f="title"]').value.trim(),
+        detail: b.querySelector('[data-f="detail"]').value.trim(),
+        when: b.querySelector('[data-f="when"]').value.trim()
+      });
+    }
+    state.news.items = keepOnly ? items : items.filter(function (it) { return it.title; });
+  }
+
+  // ── 추가 버튼 ─────────────────────────────────────────────────────────────
+  $("addStaff").addEventListener("click", function () {
+    collectStaff(true); state.staff.members.push({ name: "", role: "", education: [], ministry: [] }); renderForms();
+  });
+  $("addTier").addEventListener("click", function () {
+    collectWorship(true); state.worship.tiers.push({ label: "", rows: [] }); renderForms();
+  });
+  $("addNews").addEventListener("click", function () {
+    collectNews(true); state.news.items.push({ title: "", detail: "", when: "" }); renderForms();
+  });
+
+  // 예배시간 안내 그림
+  $("wsImage").addEventListener("change", function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    compress(f, function (err, url) {
+      if (err) { msg($("saveMsg"), err.message, false); return; }
+      var id = "worship-" + Date.now();
+      pendingImages[id] = url;
+      state.worship.image = id;
+      var p = $("wsImagePreview");
+      p.src = url; p.classList.remove("hidden");
+      msg($("saveMsg"), "그림을 담았습니다. 아래 '저장하기'를 눌러야 반영돼요.", true);
+    });
+  });
+
+  // ── 저장 ──────────────────────────────────────────────────────────────────
+  $("saveBtn").addEventListener("click", function () {
+    collectStaff(); collectWorship(); collectNews();
+    $("saveBtn").disabled = true;
+    msg($("saveMsg"), "저장하는 중...", true);
+
+    var jobs = [];
+    for (var id in pendingImages) {
+      if (Object.prototype.hasOwnProperty.call(pendingImages, id)) {
+        jobs.push(writeDoc("homepage_images/" + id, { dataUrl: pendingImages[id] }));
+      }
+    }
+    Promise.all(jobs)
+      .then(function () {
+        return Promise.all([
+          writeDoc("homepage/staff", { members: state.staff.members }),
+          writeDoc("homepage/worship", state.worship),
+          writeDoc("homepage/news", { items: state.news.items })
+        ]);
+      })
+      .then(function () {
+        pendingImages = {};
+        $("saveBtn").disabled = false;
+        msg($("saveMsg"), "저장했습니다. 홈페이지를 새로고침하면 바뀐 내용이 보입니다.", true);
+      })
+      .catch(function (e) {
+        $("saveBtn").disabled = false;
+        msg($("saveMsg"), e.message, false);
+      });
+  });
+
+  // ── 비밀번호 바꾸기 ───────────────────────────────────────────────────────
+  $("changePwBtn").addEventListener("click", function () {
+    var np = $("newPw").value;
+    if (!np || np.length < 6) { msg($("pwMsg"), "6자 이상으로 정해 주세요.", false); return; }
+    $("changePwBtn").disabled = true;
+    fetch("https://identitytoolkit.googleapis.com/v1/accounts:update?key=" + FB.apiKey, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken: idToken, password: np, returnSecureToken: true })
+    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        $("changePwBtn").disabled = false;
+        if (!res.ok) {
+          msg($("pwMsg"), "바꾸지 못했어요 (" + ((res.d.error && res.d.error.message) || "오류") +
+            "). 방금 로그인한 상태에서만 바꿀 수 있어요 — 창을 닫았다 다시 들어와 주세요.", false);
+          return;
+        }
+        if (res.d.idToken) idToken = res.d.idToken;
+        $("newPw").value = "";
+        msg($("pwMsg"), "비밀번호를 바꿨습니다. 다음부터 새 비밀번호로 들어오세요.", true);
+      }).catch(function () {
+        $("changePwBtn").disabled = false;
+        msg($("pwMsg"), "연결하지 못했어요.", false);
+      });
+  });
+})();
+</script>
+</body>
+</html>
