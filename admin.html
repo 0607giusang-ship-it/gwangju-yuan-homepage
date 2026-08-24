@@ -289,6 +289,11 @@
   var state = { staff: { members: [] }, worship: { primary: {}, tiers: [] }, news: { items: [] },
                 sermons: { sunday: [], daily: [], shorts: [] } };
   var vTab = "sunday"; // 지금 보고 있는 영상 갈래
+  // 저장하는 동안에는 목록을 건드리지 못하게 한다.
+  // 저장은 사진 올리기 + 문서 4건 왕복이라 몇 초가 걸리는데, 그 사이에 영상을 추가하거나
+  // 지우면 저장이 끝나는 순간 **저장 시작 시점의 목록으로 되돌아가** 그 사이의 손질이
+  // 서버에도 화면에도 안 남고 사라진다. 그래서 버튼 자체를 잠근다.
+  var videoBusy = false;
   var pendingImages = {}; // 저장할 때 함께 올릴 새 사진들 { imageId: dataUrl }
   var staleImages = [];   // 사진을 바꿔서 더는 쓰지 않게 된 옛 사진 문서 이름들
   var loadedOnce = false; // 이미 불러온 뒤라면(재로그인 등) 다시 불러와 덮어쓰지 않는다
@@ -666,6 +671,14 @@
     };
   }
 
+  function setVideoBusy(on) {
+    videoBusy = on;
+    var add = $("vAdd");
+    if (add) add.disabled = on;
+    var dels = document.querySelectorAll("#vList .item-head button");
+    for (var i = 0; i < dels.length; i++) dels[i].disabled = on;
+  }
+
   function videoSummary(cat, v) {
     if (cat === "sunday") return (v.t || "(제목 없음)") + (v.ref ? " · " + v.ref : "");
     if (cat === "daily") return v.ref || "(날짜 없음)";
@@ -713,7 +726,9 @@
       del.className = "small danger";
       del.type = "button";
       del.textContent = "지우기";
+      del.disabled = videoBusy; // 저장 중에 다시 그려져도 잠금이 풀리지 않게
       del.addEventListener("click", function () {
+        if (videoBusy) return;
         state.sermons[vTab].splice(idx, 1);
         renderVideoList();
       });
@@ -748,6 +763,7 @@
 
   // 추가
   $("vAdd").addEventListener("click", function () {
+    if (videoBusy) return;
     var href = normalizeYoutube($("vHref").value);
     if (!href) {
       msg($("vMsg"), "유튜브 주소가 아닌 것 같아요. 주소창의 링크나 '공유' 버튼으로 복사한 링크를 붙여넣어 주세요.", false);
@@ -810,23 +826,42 @@
   // ── 저장 ──────────────────────────────────────────────────────────────────
   // 영상 입력칸에 뭔가 적어 두고 '+추가'를 안 누른 채 저장하면, 그 내용은 어디에도 안 남는다.
   // 다른 칸들은 적은 그대로 저장되는데 이 자리만 규칙이 다르고 티도 안 나므로, 저장을 막고 알린다.
-  var VIDEO_INPUTS = ["vHref", "vTitle", "vRef", "vDate", "vDaily", "vCap1", "vCap2"];
-  function pendingVideoInput() {
-    for (var i = 0; i < VIDEO_INPUTS.length; i++) {
-      var n = $(VIDEO_INPUTS[i]);
-      if (n && n.value.trim()) return true;
+  // 어느 갈래의 칸인지까지 알려 준다. 지금 안 보이는 탭의 칸일 수 있어서, 이름을 말해 주지
+  // 않으면 목사님이 무엇을 어디서 고쳐야 하는지 찾지 못한다.
+  var VIDEO_FIELDS = [
+    { id: "vHref", cat: null },  // 갈래 공용 칸 — 지금 보고 있는 갈래로 알린다
+    { id: "vTitle", cat: "sunday" }, { id: "vRef", cat: "sunday" }, { id: "vDate", cat: "sunday" },
+    { id: "vDaily", cat: "daily" },
+    { id: "vCap1", cat: "shorts" }, { id: "vCap2", cat: "shorts" }
+  ];
+  var CAT_NAMES = { sunday: "주일예배 설교", daily: "한 구절 말씀묵상", shorts: "숏츠" };
+
+  function pendingVideoCats() {
+    var seen = {}, order = [];
+    for (var i = 0; i < VIDEO_FIELDS.length; i++) {
+      var f = VIDEO_FIELDS[i], n = $(f.id);
+      if (!n || !n.value.trim()) continue;
+      var c = f.cat || vTab;
+      if (!seen[c]) { seen[c] = true; order.push(c); }
     }
-    return false;
+    return order;
   }
 
   $("saveBtn").addEventListener("click", function () {
-    if (pendingVideoInput()) {
-      msg($("vMsg"), "적어 두신 영상이 아직 목록에 안 들어갔어요. '＋ 목록 맨 위에 추가'를 먼저 눌러 주세요.", false);
-      msg($("saveMsg"), "영상 입력칸을 먼저 정리해 주세요(위 안내 참고).", false);
-      return;
-    }
+    // ★더 심각한 쪽을 먼저 알린다. 못 불러온 상태라면 입력칸을 정리해도 저장하면 안 되므로,
+    //   입력칸 안내부터 띄우면 목사님이 그것만 고치고 다시 눌러 보게 된다.
     if (loadFailed) {
       msg($("saveMsg"), "지금 내용을 불러오지 못한 상태라 저장할 수 없습니다. 새로고침해 주세요.", false);
+      return;
+    }
+    var pend = pendingVideoCats();
+    if (pend.length) {
+      var names = pend.map(function (c) { return "'" + (CAT_NAMES[c] || c) + "'"; }).join(", ");
+      // 그 갈래를 열어 준다 — 안 보이는 탭에 적어 뒀다면 말만 해서는 찾기 어렵다.
+      if (vTab !== pend[0]) { vTab = pend[0]; renderVideoList(); }
+      msg($("vMsg"), names + " 칸에 적어 두신 영상이 아직 목록에 안 들어갔어요. " +
+        "'＋ 목록 맨 위에 추가'를 먼저 눌러 주세요.", false);
+      msg($("saveMsg"), names + " 의 영상 입력칸을 먼저 정리해 주세요(위 안내 참고).", false);
       return;
     }
     collectStaff(); collectWorship(); collectNews();
@@ -834,6 +869,7 @@
     // 안 그러면 화면에는 밀려난 항목이 남아 있어서, 나중에 다른 항목 하나를 지우고 저장하면
     // 예전에 밀려났던 것이 되살아난 것처럼 보인다(서버에는 안 들어가지만 혼란스럽다).
     var trimmedSermons = trimSermons();
+    setVideoBusy(true);
     $("saveBtn").disabled = true;
     msg($("saveMsg"), "저장하는 중...", true);
 
@@ -864,6 +900,7 @@
       })
       .then(function () {
         // 서버에 들어간 것과 화면이 같은 것을 보도록 맞춘다.
+        setVideoBusy(false);
         state.sermons = {
           sunday: trimmedSermons.sunday.slice(),
           daily: trimmedSermons.daily.slice(),
@@ -874,6 +911,7 @@
         msg($("saveMsg"), "저장했습니다. 홈페이지를 새로고침하면 바뀐 내용이 보입니다.", true);
       })
       .catch(function (e) {
+        setVideoBusy(false);
         $("saveBtn").disabled = false;
         if (e && e.authExpired) {
           // ★고치던 내용(state)과 담아 둔 사진(pendingImages)은 그대로 둔 채 로그인만 다시 받는다.
