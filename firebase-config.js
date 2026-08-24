@@ -18,6 +18,17 @@ window.HOMEPAGE_FB = {
   adminEmail: "uanchurch0607@gmail.com",
 };
 
+// 카테고리별로 남겨 둘 최신 영상 개수.
+// 관리자가 새 영상을 넣으면 이 개수를 넘는 옛 항목은 저장할 때 자동으로 밀려난다 —
+// 목사님이 옛 영상을 손으로 지우지 않아도 목록이 알아서 정리된다.
+// ★홈페이지(content.js)와 관리자 화면(admin.html)이 **같은 값을 봐야** 하므로 여기에 둔다.
+//   한쪽에만 적어 두면 나중에 값을 바꿀 때 다른 쪽이 조용히 뒤처진다.
+window.HOMEPAGE_KEEP_LATEST = {
+  sunday: 8,   // 주일예배 설교
+  daily: 8,    // 한 구절 말씀묵상
+  shorts: 6,   // 숏츠
+};
+
 // Firestore REST 주소를 만들어 주는 도우미. SDK 를 따로 받지 않아 페이지가 가볍습니다.
 window.HOMEPAGE_FB.docUrl = function (path) {
   return (

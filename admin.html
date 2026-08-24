@@ -118,6 +118,50 @@
     </div>
 
     <div class="card">
+      <h2>말씀의 길 (영상 목록)</h2>
+      <div class="row-actions" id="vTabs">
+        <button class="small primary" type="button" data-vtab="sunday">주일예배 설교</button>
+        <button class="small" type="button" data-vtab="daily">한 구절 말씀묵상</button>
+        <button class="small" type="button" data-vtab="shorts">숏츠</button>
+      </div>
+
+      <div class="item">
+        <label for="vHref">유튜브 링크 붙여넣기</label>
+        <input type="text" id="vHref" placeholder="https://www.youtube.com/watch?v=...">
+
+        <div id="fSunday">
+          <label for="vTitle">제목</label>
+          <input type="text" id="vTitle" placeholder="순종으로 여는 하나님나라">
+          <label for="vRef">성경구절 (전체 영상이면 '주일예배 전체 영상')</label>
+          <input type="text" id="vRef" placeholder="요한복음 2장 5절–11절">
+          <label for="vDate">날짜</label>
+          <input type="text" id="vDate" placeholder="26.08.09">
+        </div>
+
+        <div id="fDaily">
+          <label for="vDaily">날짜</label>
+          <input type="text" id="vDaily" placeholder="26년 8월 18일">
+          <p class="note">제목('한 구절 말씀묵상')과 '매일 1~2분' 표시는 자동으로 붙습니다.</p>
+        </div>
+
+        <div id="fShorts">
+          <label for="vCap1">캡션 첫째 줄</label>
+          <input type="text" id="vCap1" placeholder="순종으로 여는">
+          <label for="vCap2">캡션 둘째 줄</label>
+          <input type="text" id="vCap2" placeholder="하나님나라">
+        </div>
+
+        <div class="row-actions">
+          <button class="primary small" type="button" id="vAdd">＋ 목록 맨 위에 추가</button>
+        </div>
+        <p class="msg" id="vMsg"></p>
+      </div>
+
+      <div id="vList"></div>
+      <p class="note" id="vKeepNote"></p>
+    </div>
+
+    <div class="card">
       <h2>비밀번호 바꾸기</h2>
       <label for="newPw">새 비밀번호 (12자 이상)</label>
       <input type="password" id="newPw" autocomplete="new-password">
@@ -242,7 +286,9 @@
   }
 
   // ── 화면 상태 ─────────────────────────────────────────────────────────────
-  var state = { staff: { members: [] }, worship: { primary: {}, tiers: [] }, news: { items: [] } };
+  var state = { staff: { members: [] }, worship: { primary: {}, tiers: [] }, news: { items: [] },
+                sermons: { sunday: [], daily: [], shorts: [] } };
+  var vTab = "sunday"; // 지금 보고 있는 영상 갈래
   var pendingImages = {}; // 저장할 때 함께 올릴 새 사진들 { imageId: dataUrl }
   var staleImages = [];   // 사진을 바꿔서 더는 쓰지 않게 된 옛 사진 문서 이름들
   var loadedOnce = false; // 이미 불러온 뒤라면(재로그인 등) 다시 불러와 덮어쓰지 않는다
@@ -363,30 +409,70 @@
           };
         }).filter(function (it) { return it.title; });
 
-        return { members: members, worship: worship, items: items };
+        // 말씀의 길 — 지금 홈페이지에 걸려 있는 영상 목록을 그대로 가져온다.
+        var sermons = { sunday: [], daily: [], shorts: [] };
+        all(doc, '.cat-group[data-cat="sunday"] .sermon-row').forEach(function (a) {
+          sermons.sunday.push({
+            href: a.getAttribute("href") || "",
+            t: txt(a.querySelector(".t")),
+            ref: txt(a.querySelector(".ref")),
+            cat: txt(a.querySelector(".cat"))
+          });
+        });
+        all(doc, '.cat-group[data-cat="daily"] .sermon-row').forEach(function (a) {
+          sermons.daily.push({
+            href: a.getAttribute("href") || "",
+            ref: txt(a.querySelector(".ref"))
+          });
+        });
+        all(doc, '.cat-group[data-cat="shorts"] .shorts-chip').forEach(function (a) {
+          var cap = a.querySelector(".cap");
+          // 캡션은 <br> 로 두 줄이다. 화면에 보이는 줄 그대로 되살린다.
+          var lines = [];
+          if (cap) {
+            for (var i = 0; i < cap.childNodes.length; i++) {
+              var n = cap.childNodes[i];
+              if (n.nodeType === 3 && n.nodeValue.trim()) lines.push(n.nodeValue.trim());
+            }
+          }
+          sermons.shorts.push({
+            href: a.getAttribute("href") || "",
+            cap: lines.join(String.fromCharCode(10))
+          });
+        });
+
+        return { members: members, worship: worship, items: items, sermons: sermons };
       });
   }
 
   // ── 불러오기 ──────────────────────────────────────────────────────────────
   function loadAll() {
-    Promise.all([readDoc("homepage/staff"), readDoc("homepage/worship"), readDoc("homepage/news")])
+    Promise.all([readDoc("homepage/staff"), readDoc("homepage/worship"), readDoc("homepage/news"),
+                 readDoc("homepage/sermons")])
       .then(function (r) {
         state.staff = r[0] && r[0].members ? r[0] : { members: [] };
         state.worship = r[1] && (r[1].primary || r[1].tiers) ? r[1] : { primary: {}, tiers: [] };
         state.news = r[2] && r[2].items ? r[2] : { items: [] };
+        var sm = r[3] || {};
+        state.sermons = {
+          sunday: sm.sunday || [], daily: sm.daily || [], shorts: sm.shorts || []
+        };
 
         var needStaff = !state.staff.members.length;
         var needWorship = !(state.worship.primary && state.worship.primary.name) &&
                           !(state.worship.tiers || []).length;
         var needNews = !(state.news.items || []).length;
+        var needSermons = !state.sermons.sunday.length && !state.sermons.daily.length &&
+                          !state.sermons.shorts.length;
         loadedOnce = true;
-        if (!needStaff && !needWorship && !needNews) { renderForms(); return; }
+        if (!needStaff && !needWorship && !needNews && !needSermons) { renderForms(); return; }
 
         // 아직 저장 전인 칸만 지금 홈페이지 내용으로 채운다(이미 저장된 칸은 건드리지 않는다).
         return seedFromSite().then(function (seed) {
           if (needStaff) state.staff = { members: seed.members };
           if (needWorship) state.worship = seed.worship;
           if (needNews) state.news = { items: seed.items };
+          if (needSermons && seed.sermons) state.sermons = seed.sermons;
           renderForms();
           msg($("saveMsg"), "지금 홈페이지에 있는 내용을 그대로 불러왔어요. 고친 뒤 저장하시면 됩니다.", true);
         }).catch(function () {
@@ -489,6 +575,8 @@
 
     var nl = $("newsItems"); nl.innerHTML = "";
     (state.news.items || []).forEach(function (it, i) { nl.appendChild(newsItem(it, i)); });
+
+    renderVideoList();
   }
 
   // ── 폼 -> 상태 ────────────────────────────────────────────────────────────
@@ -531,6 +619,164 @@
     }
     state.news.items = keepOnly ? items : items.filter(function (it) { return it.title; });
   }
+
+  // ── 말씀의 길 (영상 목록) ─────────────────────────────────────────────────
+  //
+  // 유튜브 주소인지 확인하고, 공유 버튼이 주는 짧은 주소는 긴 주소로 바꿔 준다.
+  // 정규식 대신 문자열 앞부분 비교만 쓴다 — 읽기 쉽고 빗나갈 구석이 없다.
+  // 맞지 않으면 null 을 돌려주고, 그러면 추가 자체가 되지 않는다(엉뚱한 링크 저장 방지).
+  function normalizeYoutube(u) {
+    var s = String(u || "").trim();
+    if (!s) return null;
+    var lower = s.toLowerCase();
+
+    // 유튜브 '공유' 버튼은 youtu.be/아이디 형태를 준다. 목사님이 그대로 붙여넣어도
+    // 되도록 여기서 긴 주소로 바꿔 저장한다(거절하지 않는다).
+    var shortForms = ["https://youtu.be/", "http://youtu.be/"];
+    for (var i = 0; i < shortForms.length; i++) {
+      if (lower.indexOf(shortForms[i]) === 0) {
+        var id = s.slice(shortForms[i].length).split("?")[0].split("&")[0];
+        return id ? "https://www.youtube.com/watch?v=" + id : null;
+      }
+    }
+
+    var okForms = [
+      "https://www.youtube.com/watch?v=", "https://youtube.com/watch?v=",
+      "https://m.youtube.com/watch?v=",
+      "https://www.youtube.com/shorts/", "https://youtube.com/shorts/",
+      "https://m.youtube.com/shorts/"
+    ];
+    for (var j = 0; j < okForms.length; j++) {
+      if (lower.indexOf(okForms[j]) === 0 && s.length > okForms[j].length) return s;
+    }
+    return null;
+  }
+
+  // 저장할 때 갈래마다 최신 몇 개만 남긴다. 목사님이 옛 영상을 손으로 지우지 않아도
+  // 목록이 알아서 정리된다(새 항목은 늘 맨 위에 들어오므로 앞에서부터 남기면 된다).
+  function trimSermons() {
+    var keep = window.HOMEPAGE_KEEP_LATEST || { sunday: 8, daily: 8, shorts: 6 };
+    return {
+      sunday: (state.sermons.sunday || []).slice(0, keep.sunday),
+      daily: (state.sermons.daily || []).slice(0, keep.daily),
+      shorts: (state.sermons.shorts || []).slice(0, keep.shorts)
+    };
+  }
+
+  function videoSummary(cat, v) {
+    if (cat === "sunday") return (v.t || "(제목 없음)") + (v.ref ? " · " + v.ref : "");
+    if (cat === "daily") return v.ref || "(날짜 없음)";
+    return String(v.cap || "").split(String.fromCharCode(10)).join(" / ");
+  }
+
+  function renderVideoList() {
+    var keep = window.HOMEPAGE_KEEP_LATEST || {};
+    var list = $("vList");
+    if (!list) return;
+
+    // 갈래 단추 상태
+    var tabs = document.querySelectorAll("#vTabs button");
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].className = "small" + (tabs[i].getAttribute("data-vtab") === vTab ? " primary" : "");
+    }
+    // 갈래마다 필요한 칸만 보여 준다
+    $("fSunday").style.display = vTab === "sunday" ? "" : "none";
+    $("fDaily").style.display = vTab === "daily" ? "" : "none";
+    $("fShorts").style.display = vTab === "shorts" ? "" : "none";
+
+    var items = state.sermons[vTab] || [];
+    var limit = keep[vTab];
+    $("vKeepNote").textContent = limit
+      ? "최신 " + limit + "개까지만 홈페이지에 남습니다. 그보다 오래된 것은 저장할 때 자동으로 밀려납니다."
+      : "";
+
+    list.innerHTML = "";
+    if (!items.length) {
+      var empty = document.createElement("p");
+      empty.className = "note";
+      empty.textContent = "아직 등록된 영상이 없습니다.";
+      list.appendChild(empty);
+      return;
+    }
+    items.forEach(function (v, idx) {
+      var box = document.createElement("div");
+      box.className = "item";
+      var head = document.createElement("div");
+      head.className = "item-head";
+      var label = document.createElement("strong");
+      label.textContent = (idx + 1) + "번째" +
+        (limit && idx >= limit ? " (저장하면 밀려남)" : "");
+      var del = document.createElement("button");
+      del.className = "small danger";
+      del.type = "button";
+      del.textContent = "지우기";
+      del.addEventListener("click", function () {
+        state.sermons[vTab].splice(idx, 1);
+        renderVideoList();
+      });
+      head.appendChild(label);
+      head.appendChild(del);
+      box.appendChild(head);
+
+      var sum = document.createElement("div");
+      sum.textContent = videoSummary(vTab, v);
+      box.appendChild(sum);
+
+      var link = document.createElement("div");
+      link.className = "note";
+      link.textContent = v.href || "";
+      box.appendChild(link);
+
+      list.appendChild(box);
+    });
+  }
+
+  // 갈래 바꾸기
+  (function () {
+    var tabs = document.querySelectorAll("#vTabs button");
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].addEventListener("click", function () {
+        vTab = this.getAttribute("data-vtab");
+        msg($("vMsg"), "", true);
+        renderVideoList();
+      });
+    }
+  })();
+
+  // 추가
+  $("vAdd").addEventListener("click", function () {
+    var href = normalizeYoutube($("vHref").value);
+    if (!href) {
+      msg($("vMsg"), "유튜브 주소가 아닌 것 같아요. 주소창의 링크나 '공유' 버튼으로 복사한 링크를 붙여넣어 주세요.", false);
+      return;
+    }
+    var item = null;
+    if (vTab === "sunday") {
+      var title = $("vTitle").value.trim();
+      var date = $("vDate").value.trim();
+      if (!title) { msg($("vMsg"), "제목을 적어 주세요.", false); return; }
+      item = {
+        href: href, t: title, ref: $("vRef").value.trim(),
+        cat: date ? "주일예배 설교 · " + date : "주일예배 설교"
+      };
+    } else if (vTab === "daily") {
+      var d = $("vDaily").value.trim();
+      if (!d) { msg($("vMsg"), "날짜를 적어 주세요.", false); return; }
+      item = { href: href, ref: d };
+    } else {
+      var c1 = $("vCap1").value.trim();
+      var c2 = $("vCap2").value.trim();
+      if (!c1) { msg($("vMsg"), "캡션 첫째 줄을 적어 주세요.", false); return; }
+      item = { href: href, cap: c2 ? c1 + String.fromCharCode(10) + c2 : c1 };
+    }
+
+    state.sermons[vTab].unshift(item);
+    ["vHref", "vTitle", "vRef", "vDate", "vDaily", "vCap1", "vCap2"].forEach(function (id) {
+      var n = $(id); if (n) n.value = "";
+    });
+    renderVideoList();
+    msg($("vMsg"), "목록 맨 위에 넣었습니다. 아래 '저장하기'를 눌러야 홈페이지에 반영돼요.", true);
+  });
 
   // ── 추가 버튼 ─────────────────────────────────────────────────────────────
   $("addStaff").addEventListener("click", function () {
@@ -579,7 +825,8 @@
         return Promise.all([
           writeDoc("homepage/staff", { members: state.staff.members }),
           writeDoc("homepage/worship", state.worship),
-          writeDoc("homepage/news", { items: state.news.items })
+          writeDoc("homepage/news", { items: state.news.items }),
+          writeDoc("homepage/sermons", trimSermons())
         ]);
       })
       .then(function () {

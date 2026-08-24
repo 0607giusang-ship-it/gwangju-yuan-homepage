@@ -196,6 +196,94 @@
     }
   }
 
+  // ── ④ 말씀의 길 (주일예배 설교 / 한 구절 말씀묵상 / 숏츠) ──────────────────
+  //
+  // 세 갈래는 화면에 담기는 내용이 서로 다르다. 마크업을 그대로 다시 만들어야 지금 보이는
+  // 모양이 한 픽셀도 안 바뀌므로, 갈래마다 따로 그린다.
+  //   sunday 제목 + 성경구절(또는 '주일예배 전체 영상') + '주일예배 설교 · YY.MM.DD'
+  //   daily  제목과 라벨은 늘 같고 날짜만 바뀐다 -> 고정값은 여기서 붙인다
+  //   shorts 두 줄짜리 캡션만
+  var DAILY_TITLE = "한 구절 말씀묵상";
+  var DAILY_LABEL = "매일 1~2분";
+
+  // 주소가 이상하면 아예 그리지 않는다. 관리자만 쓸 수 있는 자리지만, 값이 어떤 경로로든
+  // 뒤틀렸을 때 javascript: 같은 주소가 링크로 걸리는 일은 원천적으로 막는다.
+  function safeHref(u) {
+    var s = String(u || "").trim();
+    return /^https:\/\//i.test(s) ? s : null;
+  }
+
+  function videoLink(cls, href) {
+    var a = el("a", cls);
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener";
+    return a;
+  }
+
+  function renderSermons(data) {
+    var groups = {
+      sunday: document.querySelector('.cat-group[data-cat="sunday"]'),
+      daily: document.querySelector('.cat-group[data-cat="daily"]'),
+      // 숏츠는 목록 아래 고정 안내문이 같이 들어 있으므로 **줄(strip)만** 갈아끼운다.
+      shorts: document.querySelector('.cat-group[data-cat="shorts"] .shorts-strip')
+    };
+
+    // 주일예배 설교
+    if (groups.sunday && isNonEmptyArray(data.sunday)) {
+      var f1 = document.createDocumentFragment();
+      data.sunday.forEach(function (v) {
+        var href = v && safeHref(v.href);
+        if (!href || !v.t) return;
+        var a = videoLink("sermon-row", href);
+        var left = el("div", "left");
+        left.appendChild(el("span", "t", v.t));
+        if (v.ref) left.appendChild(el("span", "ref", v.ref));
+        a.appendChild(left);
+        a.appendChild(el("span", "cat", v.cat || ""));
+        f1.appendChild(a);
+      });
+      if (f1.childNodes.length) { groups.sunday.innerHTML = ""; groups.sunday.appendChild(f1); }
+    }
+
+    // 한 구절 말씀묵상
+    if (groups.daily && isNonEmptyArray(data.daily)) {
+      var f2 = document.createDocumentFragment();
+      data.daily.forEach(function (v) {
+        var href = v && safeHref(v.href);
+        if (!href) return;
+        var a = videoLink("sermon-row", href);
+        var left = el("div", "left");
+        left.appendChild(el("span", "t", DAILY_TITLE));
+        left.appendChild(el("span", "ref", v.ref || ""));
+        a.appendChild(left);
+        a.appendChild(el("span", "cat", DAILY_LABEL));
+        f2.appendChild(a);
+      });
+      if (f2.childNodes.length) { groups.daily.innerHTML = ""; groups.daily.appendChild(f2); }
+    }
+
+    // 숏츠
+    if (groups.shorts && isNonEmptyArray(data.shorts)) {
+      var f3 = document.createDocumentFragment();
+      data.shorts.forEach(function (v) {
+        var href = v && safeHref(v.href);
+        if (!href) return;
+        var a = videoLink("shorts-chip", href);
+        var cap = el("div", "cap");
+        // 캡션은 두 줄이다. 줄바꿈을 글자로 넣지 않고 <br> 요소로 만든다
+        // (내용을 그대로 화면에 박아 넣지 않으므로 글자가 태그로 해석될 일이 없다).
+        String(v.cap || "").split(String.fromCharCode(10)).forEach(function (line, i) {
+          if (i) cap.appendChild(document.createElement("br"));
+          cap.appendChild(document.createTextNode(line));
+        });
+        a.appendChild(cap);
+        f3.appendChild(a);
+      });
+      if (f3.childNodes.length) { groups.shorts.innerHTML = ""; groups.shorts.appendChild(f3); }
+    }
+  }
+
   // ── 시작 ──────────────────────────────────────────────────────────────────
   // 세 곳을 따로 부른다. 하나가 실패해도 나머지는 반영되고, 실패한 자리는 원래 내용이 남는다.
   function load(path, render) {
@@ -207,4 +295,5 @@
   load("homepage/staff", renderStaff);
   load("homepage/worship", renderWorship);
   load("homepage/news", renderNews);
+  load("homepage/sermons", renderSermons);
 })();
