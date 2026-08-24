@@ -207,10 +207,21 @@
   var DAILY_LABEL = "매일 1~2분";
 
   // 주소가 이상하면 아예 그리지 않는다. 관리자만 쓸 수 있는 자리지만, 값이 어떤 경로로든
-  // 뒤틀렸을 때 javascript: 같은 주소가 링크로 걸리는 일은 원천적으로 막는다.
+  // 뒤틀렸을 때 엉뚱한 주소가 링크로 걸리는 일은 원천적으로 막는다.
+  //
+  // ★읽는 쪽이 쓰는 쪽보다 헐거우면 안 된다. 관리자 화면은 유튜브 주소만 저장하도록 막는데
+  //   여기서 https 이기만 하면 다 통과시키면, 방어의 방향이 거꾸로가 된다. 그래서 여기서도
+  //   주소의 집(호스트)이 유튜브인지 확인한다. 정규식 대신 문자열 비교만 쓴다.
+  var YT_HOSTS = ["youtu.be", "youtube.com", "www.youtube.com", "m.youtube.com"];
   function safeHref(u) {
     var s = String(u || "").trim();
-    return /^https:\/\//i.test(s) ? s : null;
+    var lower = s.toLowerCase();
+    if (lower.indexOf("https://") !== 0) return null;
+    var host = lower.slice(8).split("/")[0].split("?")[0];
+    for (var i = 0; i < YT_HOSTS.length; i++) {
+      if (host === YT_HOSTS[i]) return s;
+    }
+    return null;
   }
 
   function videoLink(cls, href) {

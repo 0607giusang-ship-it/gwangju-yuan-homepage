@@ -644,7 +644,10 @@
       "https://www.youtube.com/watch?v=", "https://youtube.com/watch?v=",
       "https://m.youtube.com/watch?v=",
       "https://www.youtube.com/shorts/", "https://youtube.com/shorts/",
-      "https://m.youtube.com/shorts/"
+      "https://m.youtube.com/shorts/",
+      // 주일예배 실시간 방송을 마친 뒤 남는 주소는 /live/ 형태다. 이것도 정상 링크다.
+      "https://www.youtube.com/live/", "https://youtube.com/live/",
+      "https://m.youtube.com/live/"
     ];
     for (var j = 0; j < okForms.length; j++) {
       if (lower.indexOf(okForms[j]) === 0 && s.length > okForms[j].length) return s;
@@ -805,12 +808,32 @@
   });
 
   // ── 저장 ──────────────────────────────────────────────────────────────────
+  // 영상 입력칸에 뭔가 적어 두고 '+추가'를 안 누른 채 저장하면, 그 내용은 어디에도 안 남는다.
+  // 다른 칸들은 적은 그대로 저장되는데 이 자리만 규칙이 다르고 티도 안 나므로, 저장을 막고 알린다.
+  var VIDEO_INPUTS = ["vHref", "vTitle", "vRef", "vDate", "vDaily", "vCap1", "vCap2"];
+  function pendingVideoInput() {
+    for (var i = 0; i < VIDEO_INPUTS.length; i++) {
+      var n = $(VIDEO_INPUTS[i]);
+      if (n && n.value.trim()) return true;
+    }
+    return false;
+  }
+
   $("saveBtn").addEventListener("click", function () {
+    if (pendingVideoInput()) {
+      msg($("vMsg"), "적어 두신 영상이 아직 목록에 안 들어갔어요. '＋ 목록 맨 위에 추가'를 먼저 눌러 주세요.", false);
+      msg($("saveMsg"), "영상 입력칸을 먼저 정리해 주세요(위 안내 참고).", false);
+      return;
+    }
     if (loadFailed) {
       msg($("saveMsg"), "지금 내용을 불러오지 못한 상태라 저장할 수 없습니다. 새로고침해 주세요.", false);
       return;
     }
     collectStaff(); collectWorship(); collectNews();
+    // 절삭 결과를 미리 만들어 두고, 저장이 끝나면 **화면 상태도 이 값으로 맞춘다**.
+    // 안 그러면 화면에는 밀려난 항목이 남아 있어서, 나중에 다른 항목 하나를 지우고 저장하면
+    // 예전에 밀려났던 것이 되살아난 것처럼 보인다(서버에는 안 들어가지만 혼란스럽다).
+    var trimmedSermons = trimSermons();
     $("saveBtn").disabled = true;
     msg($("saveMsg"), "저장하는 중...", true);
 
@@ -826,7 +849,7 @@
           writeDoc("homepage/staff", { members: state.staff.members }),
           writeDoc("homepage/worship", state.worship),
           writeDoc("homepage/news", { items: state.news.items }),
-          writeDoc("homepage/sermons", trimSermons())
+          writeDoc("homepage/sermons", trimmedSermons)
         ]);
       })
       .then(function () {
@@ -840,6 +863,13 @@
         }));
       })
       .then(function () {
+        // 서버에 들어간 것과 화면이 같은 것을 보도록 맞춘다.
+        state.sermons = {
+          sunday: trimmedSermons.sunday.slice(),
+          daily: trimmedSermons.daily.slice(),
+          shorts: trimmedSermons.shorts.slice()
+        };
+        renderVideoList();
         $("saveBtn").disabled = false;
         msg($("saveMsg"), "저장했습니다. 홈페이지를 새로고침하면 바뀐 내용이 보입니다.", true);
       })
