@@ -232,6 +232,38 @@
     return a;
   }
 
+  // 첫 화면(hero)의 큰 글씨와 원형 재생 버튼도 이 목록에서 온다.
+  // 늘 "가장 최근 주일예배"를 가리켜야 한다. 관리자 화면이 새 설교를 목록 맨 앞에 넣으므로
+  // 0번이 최신이지만, 값이 뒤틀린 항목이 섞였을 수 있으니 **주소와 제목이 모두 성한 첫
+  // 항목**을 최신으로 본다. 성한 항목이 하나도 없으면 아무 곳도 손대지 않는다 —
+  // index.html 에 적혀 있는 내용이 그대로 남는다.
+  function renderHero(list) {
+    var latest = null, href = null;
+    for (var i = 0; i < list.length; i++) {
+      href = list[i] && safeHref(list[i].href);
+      if (href && list[i].t) { latest = list[i]; break; }
+    }
+    if (!latest) return;
+
+    var play = document.getElementById("heroPlay");
+    var title = document.getElementById("heroTitle");
+    var ref = document.getElementById("heroRef");
+    var eyebrow = document.getElementById("heroEyebrow");
+
+    if (play) play.href = href;
+    if (title) title.textContent = latest.t;
+    if (ref) ref.textContent = latest.ref || "주일예배 전체 영상";
+    // 날짜는 목록 오른쪽 라벨('주일예배 설교 · 26.08.16')에서 뒤쪽만 떼어 쓴다.
+    // 라벨에 날짜가 없으면(관리자가 날짜를 비운 경우) 날짜 없이 '이번 주 말씀'만 쓴다 —
+    // 새 제목 옆에 지난주 날짜가 남아 있는 것이 날짜가 없는 것보다 나쁘기 때문이다.
+    if (eyebrow) {
+      var cat = String(latest.cat || "");
+      var dot = cat.indexOf("·");
+      var day = dot >= 0 ? cat.slice(dot + 1).trim() : "";
+      eyebrow.textContent = day ? "이번 주 말씀 · " + day : "이번 주 말씀";
+    }
+  }
+
   function renderSermons(data) {
     var groups = {
       sunday: document.querySelector('.cat-group[data-cat="sunday"]'),
@@ -256,6 +288,12 @@
       });
       if (f1.childNodes.length) { groups.sunday.innerHTML = ""; groups.sunday.appendChild(f1); }
     }
+
+    // 첫 화면도 같은 목록의 최신 항목으로 맞춘다(목록 자리가 없어도 첫 화면은 갱신한다).
+    // 여기서 넘어져도 아래 묵상·숏츠는 그려져야 한다 — 그래서 이 한 곳만 따로 받아낸다.
+    try {
+      if (isNonEmptyArray(data.sunday)) renderHero(data.sunday);
+    } catch (e) { /* 첫 화면은 하드코딩 내용 유지 */ }
 
     // 한 구절 말씀묵상
     if (groups.daily && isNonEmptyArray(data.daily)) {
